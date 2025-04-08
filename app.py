@@ -4,28 +4,65 @@ import os
 import redis
 from werkzeug.exceptions import BadRequestKeyError
 from datetime import datetime, timedelta
+import logging
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", 'your-secret-key-here')  # 從環境變數讀取，若無則用預設值
+app.secret_key = os.getenv("SECRET_KEY", 'your-secret-key-here')
 
-# Upstash Redis 連接
-kv = redis.from_url(os.getenv("UPSTASH_REDIS_REST_URL"))
+# 配置日誌
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# 獲取 Redis URL
+redis_url = os.getenv("REDIS_URL")
+if redis_url:
+    logger.info(f"Attempting to connect to Redis with URL: {redis_url[:20]}... (masked)")
+    try:
+        kv = redis.from_url(redis_url)
+        kv.ping()
+        logger.info("Redis connection established successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis: {e}")
+        kv = None
+else:
+    logger.warning("REDIS_URL missing, using in-memory fallback")
+    kv = None
+
+# 若 Redis 不可用，使用記憶體儲存
+if kv is None:
+    MEMORY_DATA = []
+
+    def load_data():
+        logger.info("Loading data from memory")
+        return MEMORY_DATA
+
+    def save_data(data):
+        global MEMORY_DATA
+        MEMORY_DATA = data
+        logger.info("Saved data to memory")
+else:
+    def load_data():
+        try:
+            data = kv.get("lottery_data")
+            return json.loads(data) if data else []
+        except Exception as e:
+            logger.error(f"Load data error: {e}")
+            return []
+
+    def save_data(data):
+        try:
+            kv.set("lottery_data", json.dumps(data))
+        except Exception as e:
+            logger.error(f"Save data error: {e}")
 
 BANKS = ["中國銀行", "大豐銀行", "廣發銀行", "工商銀行", "Mpay", "支付寶", "UEPAY", "國際銀行"]
 VALUES = [0, 10, 20, 50, 100, 200]
 USERS = ["牙珍", "牙依"]
 
 def get_week_range(today):
-    start = today - timedelta(days=today.weekday())  # 週一
-    end = start + timedelta(days=4)  # 週五
+    start = today - timedelta(days=today.weekday())
+    end = start + timedelta(days=4)
     return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
-
-def load_data():
-    data = kv.get("lottery_data")
-    return json.loads(data) if data else []
-
-def save_data(data):
-    kv.set("lottery_data", json.dumps(data))
 
 def get_available_banks(data, user):
     used_banks = {entry['entries'][0]['bank'] for entry in data if entry['person'] == user}
@@ -48,6 +85,7 @@ def summarize_data(data, selected_user, start_date=None, end_date=None):
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    logger.info("Entering index route")
     data = load_data()
     selected_bank = request.args.get('selected_bank', None)
     selected_user_summary = request.args.get('selected_user_summary', USERS[0])
@@ -146,5 +184,5 @@ def delete(index):
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 3000))  # 從環境變數讀取埠，預設 3000
+    port = int(os.getenv("PORT", 3000))
     app.run(host='0.0.0.0', port=port)
