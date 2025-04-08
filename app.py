@@ -13,14 +13,21 @@ app.secret_key = os.getenv("SECRET_KEY", 'your-secret-key-here')
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# 組合 Redis URL
-redis_url = f"rediss://{os.getenv('UPSTASH_REDIS_REST_TOKEN')}@{os.getenv('UPSTASH_REDIS_REST_URL').replace('https://', '')}"
-try:
-    kv = redis.from_url(redis_url)
-    logger.info("Redis connection established")
-except Exception as e:
-    logger.error(f"Failed to connect to Redis: {e}")
-    kv = None  # 後備方案，需處理
+# 檢查並組合 Redis URL
+redis_url = os.getenv("UPSTASH_REDIS_REST_URL")
+redis_token = os.getenv("UPSTASH_REDIS_REST_TOKEN")
+if redis_url and redis_token:
+    # 移除 https://，組合為 rediss://token@host 格式
+    redis_full_url = f"rediss://{redis_token}@{redis_url.replace('https://', '')}"
+    try:
+        kv = redis.from_url(redis_full_url)
+        logger.info("Redis connection established")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis: {e}")
+        kv = None
+else:
+    logger.warning("Redis URL or Token missing, using in-memory fallback")
+    kv = None
 
 BANKS = ["中國銀行", "大豐銀行", "廣發銀行", "工商銀行", "Mpay", "支付寶", "UEPAY", "國際銀行"]
 VALUES = [0, 10, 20, 50, 100, 200]
