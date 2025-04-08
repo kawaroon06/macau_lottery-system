@@ -2,36 +2,108 @@
 <html>
 <head>
     <title>抽獎記錄系統</title>
-    <!-- 引入 Bootstrap CSS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- 確保手機縮放正確 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { padding: 15px; }
-        .container { max-width: 100%; } /* 手機上允許全寬 */
+        .container { max-width: 100%; }
         .form-group { margin-bottom: 15px; }
         .error-message { color: red; text-align: center; margin-bottom: 15px; }
-        /* 手機端調整 */
         @media (max-width: 576px) {
-            h1 { font-size: 1.5rem; } /* 縮小標題 */
+            h1 { font-size: 1.5rem; }
             h2 { font-size: 1.25rem; }
-            .table { font-size: 0.9rem; } /* 縮小表格字體 */
-            .btn { padding: 5px 10px; font-size: 0.9rem; } /* 縮小按鈕 */
-            .form-select, .form-control { font-size: 0.9rem; } /* 縮小下拉選單和輸入框 */
+            .table { font-size: 0.9rem; }
+            .btn { padding: 5px 10px; font-size: 0.9rem; }
+            .form-select, .form-control { font-size: 0.9rem; }
         }
     </style>
+    <script>
+        // 更新匯總表格
+        function updateSummary() {
+            const user = document.getElementById('selected_user_summary').value;
+            const startDate = document.getElementById('start_date').value;
+            const endDate = document.getElementById('end_date').value;
+            fetch(`/api/summary?user=${user}&start_date=${startDate}&end_date=${endDate}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('summaryTableBody');
+                    tbody.innerHTML = '';
+                    for (const [bank, stats] of Object.entries(data)) {
+                        if (stats.count > 0) {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${bank}</td>
+                                <td>${stats.count}</td>
+                                <td>${stats.total_value} 元</td>
+                                <td>${stats.total_value * 3} 元</td>
+                            `;
+                            tbody.appendChild(row);
+                        }
+                    }
+                });
+        }
+
+        // 更新歷史記錄表格
+        function updateHistory() {
+            const bank = document.getElementById('selected_bank').value;
+            fetch(`/api/history?bank=${bank || ''}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tbody = document.getElementById('historyTableBody');
+                    tbody.innerHTML = '';
+                    data.forEach((entry, index) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${entry.date}</td>
+                            <td>${entry.entries[0].bank}</td>
+                            <td>${entry.person}</td>
+                            <td>${entry.entries[0].value} 元</td>
+                            <td>${entry.entries[1].value} 元</td>
+                            <td>${entry.entries[2].value} 元</td>
+                            <td>
+                                <form method="POST" action="/delete/${index}" style="display:inline;">
+                                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('確定要刪除這條記錄嗎？');">刪除</button>
+                                </form>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                });
+        }
+
+        // 更新可用銀行
+        function updateAvailableBanks() {
+            const user = document.getElementById('person_select').value;
+            window.location.href = `/?person=${user}`;
+        }
+    </script>
 </head>
 <body>
     <div class="container">
         <h1 class="text-center mb-4">抽獎記錄系統</h1>
         
-        <!-- 錯誤訊息顯示 -->
         {% if error_message %}
         <div class="error-message">{{ error_message }}</div>
         {% endif %}
 
-        <!-- 表單部分 -->
+        <form method="GET" class="mb-3">
+            <div class="row form-group">
+                <div class="col-12 col-sm-4">
+                    <label>選擇使用者:</label>
+                </div>
+                <div class="col-12 col-sm-8">
+                    <select class="form-select" id="person_select" name="person" onchange="updateAvailableBanks()">
+                        {% for user in users %}
+                        <option value="{{ user }}" {% if user == last_user %}selected{% endif %}>{{ user }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </form>
+
         <form method="POST">
             <div class="form-group">
+                <input type="hidden" name="person" value="{{ last_user }}">
                 <label for="date">日期:</label>
                 <input type="date" class="form-control" name="date" value="{{ today }}" required>
             </div>
@@ -41,7 +113,7 @@
                 </div>
                 <div class="col-12 col-sm-8">
                     <select class="form-select" name="bank" required>
-                        {% for bank in banks %}
+                        {% for bank in available_banks %}
                         <option value="{{ bank }}">{{ bank }}</option>
                         {% endfor %}
                     </select>
@@ -66,73 +138,30 @@
             </div>
         </form>
 
-        <!-- 篩選銀行 -->
-        <h2 class="mt-5">歷史記錄</h2>
-        <form method="GET" class="mb-3">
+        <h2 class="mt-5">匯總（周六周日查看）</h2>
+        <div class="mb-3">
             <div class="row">
-                <div class="col-12 col-sm-4">
-                    <label for="selected_bank">篩選銀行:</label>
-                </div>
-                <div class="col-12 col-sm-8">
-                    <select class="form-select" name="selected_bank" onchange="this.form.submit()">
-                        <option value="">所有銀行</option>
-                        {% for bank in banks %}
-                        <option value="{{ bank }}" {% if selected_bank == bank %}selected{% endif %}>{{ bank }}</option>
+                <div class="col-12 col-sm-3">
+                    <label for="selected_user_summary">選擇使用者:</label>
+                    <select class="form-select" id="selected_user_summary" onchange="updateSummary()">
+                        {% for user in users %}
+                        <option value="{{ user }}" {% if user == selected_user_summary %}selected{% endif %}>{{ user }}</option>
                         {% endfor %}
                     </select>
                 </div>
-            </div>
-        </form>
-
-        <!-- 歷史記錄表格 -->
-        <div class="table-responsive">
-            <table class="table table-striped table-bordered">
-                <thead>
-                    <tr>
-                        <th>日期</th>
-                        <th>銀行</th>
-                        <th>面值1</th>
-                        <th>面值2</th>
-                        <th>面值3</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for entry in data %}
-                    <tr>
-                        <td>{{ entry.date }}</td>
-                        <td>{{ entry.entries[0].bank }}</td>
-                        <td>{{ entry.entries[0].value }} 元</td>
-                        <td>{{ entry.entries[1].value }} 元</td>
-                        <td>{{ entry.entries[2].value }} 元</td>
-                        <td>
-                            <form method="POST" action="{{ url_for('delete', index=loop.index0) }}" style="display:inline;">
-                                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('確定要刪除這條記錄嗎？');">刪除</button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-
-        <!-- 匯總表格 -->
-        <h2 class="mt-5">代金券匯總（周六周日查看）</h2>
-        <form method="GET" class="mb-3">
-            <div class="row">
-                <div class="col-12 col-sm-5">
+                <div class="col-12 col-sm-4">
                     <label for="start_date">開始日期:</label>
-                    <input type="date" class="form-control" name="start_date" value="{{ start_date or week_start }}">
+                    <input type="date" class="form-control" id="start_date" value="{{ start_date or week_start }}" onchange="updateSummary()">
                 </div>
-                <div class="col-12 col-sm-5">
+                <div class="col-12 col-sm-4">
                     <label for="end_date">結束日期:</label>
-                    <input type="date" class="form-control" name="end_date" value="{{ end_date or week_end }}">
+                    <input type="date" class="form-control" id="end_date" value="{{ end_date or week_end }}" onchange="updateSummary()">
                 </div>
-                <div class="col-12 col-sm-2 d-flex align-items-end">
-                    <button type="submit" class="btn btn-success w-100">篩選</button>
+                <div class="col-12 col-sm-1 d-flex align-items-end">
+                    <button type="button" class="btn btn-success w-100" onclick="updateSummary()">篩選</button>
                 </div>
             </div>
-        </form>
+        </div>
         <div class="table-responsive">
             <table class="table table-striped table-bordered">
                 <thead>
@@ -143,16 +172,65 @@
                         <th>消費金額 (總值 x 3)</th>
                     </tr>
                 </thead>
-                <tbody>
-                    {% for bank in banks %}
-                    {% if summary[bank]['count'] > 0 %}
+                <tbody id="summaryTableBody">
+                    {% for bank, stats in summary.items() %}
+                    {% if stats['count'] > 0 %}
                     <tr>
                         <td>{{ bank }}</td>
-                        <td>{{ summary[bank]['count'] }}</td>
-                        <td>{{ summary[bank]['total_value'] }} 元</td>
-                        <td>{{ summary[bank]['total_value'] * 3 }} 元</td>
+                        <td>{{ stats['count'] }}</td>
+                        <td>{{ stats['total_value'] }} 元</td>
+                        <td>{{ stats['total_value'] * 3 }} 元</td>
                     </tr>
                     {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="mt-5">歷史記錄</h2>
+        <div class="mb-3">
+            <div class="row">
+                <div class="col-12 col-sm-4">
+                    <label for="selected_bank">篩選銀行:</label>
+                </div>
+                <div class="col-12 col-sm-8">
+                    <select class="form-select" id="selected_bank" onchange="updateHistory()">
+                        <option value="">所有銀行</option>
+                        {% for bank in banks %}
+                        <option value="{{ bank }}" {% if selected_bank == bank %}selected{% endif %}>{{ bank }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered">
+                <thead>
+                    <tr>
+                        <th>日期</th>
+                        <th>銀行</th>
+                        <th>使用者</th>
+                        <th>面值1</th>
+                        <th>面值2</th>
+                        <th>面值3</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    {% for entry in data %}
+                    <tr>
+                        <td>{{ entry.date }}</td>
+                        <td>{{ entry.entries[0].bank }}</td>
+                        <td>{{ entry.person }}</td>
+                        <td>{{ entry.entries[0].value }} 元</td>
+                        <td>{{ entry.entries[1].value }} 元</td>
+                        <td>{{ entry.entries[2].value }} 元</td>
+                        <td>
+                            <form method="POST" action="{{ url_for('delete', index=loop.index0) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('確定要刪除這條記錄嗎？');">刪除</button>
+                            </form>
+                        </td>
+                    </tr>
                     {% endfor %}
                 </tbody>
             </table>
