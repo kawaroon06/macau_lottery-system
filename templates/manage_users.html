@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>管理用戶</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { padding: 15px; background-color: #f8f9fa; }
+        .container { max-width: 100%; }
+        .form-group { margin-bottom: 15px; }
+        .error-message { color: #dc3545; text-align: center; margin-bottom: 15px; font-weight: bold; }
+        h1, h2 { color: #343a40; }
+        .btn-primary { background-color: #007bff; border-color: #007bff; }
+        .btn-primary:hover { background-color: #0056b3; border-color: #0056b3; }
+        .list-group-item { display: flex; justify-content: space-between; align-items: center; }
+        @media (max-width: 576px) {
+            h1 { font-size: 1.5rem; }
+            h2 { font-size: 1.25rem; }
+            .btn { padding: 5px 10px; font-size: 0.9rem; }
+            .form-control { font-size: 0.9rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">管理用戶</h1>
+        <div class="text-center mb-3">
+            <a href="{{ url_for('index') }}" class="btn btn-outline-primary">返回主頁</a>
+        </div>
+
+        {% if error_message %}
+        <div class="error-message">{{ error_message }}</div>
+        {% endif %}
+
+        <h2 class="mt-4">當前用戶</h2>
+        <ul class="list-group mb-4">
+            {% for user in users %}
+            <li class="list-group-item">
+                {{ user }}
+                <form method="POST" action="{{ url_for('manage_users') }}" style="display:inline;">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="user_to_delete" value="{{ user }}">
+                    <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('確定要刪除此用戶嗎？');">刪除</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+
+        <h2>新增用戶</h2>
+        <form method="POST" class="mb-3">
+            <div class="row form-group">
+                <div class="col-12 col-sm-9">
+                    <input type="hidden" name="action" value="add">
+                    <input type="text" class="form-control" name="new_user" placeholder="輸入新用戶名" required>
+                </div>
+                <div class="col-12 col-sm-3">
+                    <button type="submit" class="btn btn-primary w-100">新增</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

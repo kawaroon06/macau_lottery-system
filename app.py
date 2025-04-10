@@ -2,12 +2,11 @@ from flask import Flask, request, render_template, redirect, url_for, session, j
 import json
 import os
 import redis
-from werkzeug.exceptions import BadRequestKeyError
 from datetime import datetime, timedelta
 import logging
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", 'your-secret-key-here')
+app.secret_key = os.getenv("SECRET_KEY", 'your-secret-key-here')  # Vercel 環境變數或預設值
 
 # 配置日誌
 logging.basicConfig(level=logging.INFO)
@@ -18,46 +17,52 @@ redis_url = os.getenv("REDIS_URL")
 if redis_url:
     logger.info(f"Attempting to connect to Redis with URL: {redis_url[:20]}... (masked)")
     try:
-        kv = redis.from_url(redis_url)
+        kv = redis.from_url(redis_url, decode_responses=True)  # 確保返回字串而非字節
         kv.ping()
         logger.info("Redis connection established successfully")
     except Exception as e:
         logger.error(f"Failed to connect to Redis: {e}")
         kv = None
 else:
-    logger.warning("REDIS_URL missing, using in-memory fallback")
+    logger.error("REDIS_URL environment variable is missing")
     kv = None
 
-# 若 Redis 不可用，使用記憶體儲存
+# 若 Redis 不可用，啟動會失敗（Serverless 不適合記憶體模式）
 if kv is None:
-    MEMORY_DATA = []
+    raise RuntimeError("Redis connection required for server deployment")
 
-    def load_data():
-        logger.info("Loading data from memory")
-        return MEMORY_DATA
+def load_data():
+    try:
+        data = kv.get("lottery_data")
+        return json.loads(data) if data else []
+    except Exception as e:
+        logger.error(f"Load data error: {e}")
+        return []
 
-    def save_data(data):
-        global MEMORY_DATA
-        MEMORY_DATA = data
-        logger.info("Saved data to memory")
-else:
-    def load_data():
-        try:
-            data = kv.get("lottery_data")
-            return json.loads(data) if data else []
-        except Exception as e:
-            logger.error(f"Load data error: {e}")
-            return []
+def save_data(data):
+    try:
+        kv.set("lottery_data", json.dumps(data))
+        logger.info("Data saved to Redis")
+    except Exception as e:
+        logger.error(f"Save data error: {e}")
 
-    def save_data(data):
-        try:
-            kv.set("lottery_data", json.dumps(data))
-        except Exception as e:
-            logger.error(f"Save data error: {e}")
+def load_users():
+    try:
+        users = kv.get("users")
+        return json.loads(users) if users else ["牙珍", "牙依"]  # 初始用戶
+    except Exception as e:
+        logger.error(f"Load users error: {e}")
+        return ["牙珍", "牙依"]
+
+def save_users(users):
+    try:
+        kv.set("users", json.dumps(users))
+        logger.info("Users saved to Redis")
+    except Exception as e:
+        logger.error(f"Save users error: {e}")
 
 BANKS = ["中國銀行", "大豐銀行", "廣發銀行", "工商銀行", "Mpay", "支付寶", "UEPAY", "國際銀行"]
 VALUES = [0, 10, 20, 50, 100, 200]
-USERS = ["牙珍", "牙依"]
 
 def get_week_range(today):
     start = today - timedelta(days=today.weekday())
@@ -87,13 +92,14 @@ def summarize_data(data, selected_user, start_date=None, end_date=None):
 def index():
     logger.info("Entering index route")
     data = load_data()
+    users = load_users()
     selected_bank = request.args.get('selected_bank', None)
-    selected_user_summary = request.args.get('selected_user_summary', USERS[0])
+    selected_user_summary = request.args.get('selected_user_summary', users[0])
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     error_message = None
 
-    last_user = session.get('last_user', USERS[0])
+    last_user = session.get('last_user', users[0])
     current_user = request.args.get('person', last_user)
     available_banks = get_available_banks(data, current_user)
 
@@ -102,7 +108,7 @@ def index():
             person = request.form['person']
             date = request.form['date']
             bank = request.form['bank']
-            if person not in USERS:
+            if person not in users:
                 raise ValueError("無效的使用者")
             if bank not in get_available_banks(data, person):
                 raise ValueError("此銀行已被使用")
@@ -118,7 +124,7 @@ def index():
             save_data(data)
             session['last_user'] = person
             return redirect(url_for('index'))
-        except BadRequestKeyError as e:
+        except KeyError as e:
             error_message = f"表單提交錯誤：缺少欄位 {e.args[0]}"
         except ValueError as e:
             error_message = str(e)
@@ -144,15 +150,41 @@ def index():
         summary = summarize_data(data, selected_user_summary, summary_start, summary_end)
 
     today_str = today.strftime('%Y-%m-%d')
-    return render_template('index.html', data=filtered_data, banks=BANKS, values=VALUES, users=USERS, today=today_str,
+    return render_template('index.html', data=filtered_data, banks=BANKS, values=VALUES, users=users, today=today_str,
                            selected_bank=selected_bank, selected_user_summary=selected_user_summary, summary=summary,
                            week_start=week_start, week_end=week_end, start_date=start_date, end_date=end_date,
                            error_message=error_message, last_user=current_user, available_banks=available_banks)
 
+@app.route('/manage_users', methods=['GET', 'POST'])
+def manage_users():
+    users = load_users()
+    error_message = None
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'add':
+            new_user = request.form.get('new_user')
+            if new_user and new_user not in users:
+                users.append(new_user)
+                save_users(users)
+            elif new_user in users:
+                error_message = "用戶已存在"
+            else:
+                error_message = "請輸入用戶名"
+        elif action == 'delete':
+            user_to_delete = request.form.get('user_to_delete')
+            if user_to_delete in users:
+                users.remove(user_to_delete)
+                save_users(users)
+            else:
+                error_message = "用戶不存在"
+        return redirect(url_for('manage_users'))
+    return render_template('manage_users.html', users=users, error_message=error_message)
+
 @app.route('/api/summary', methods=['GET'])
 def get_summary():
     data = load_data()
-    selected_user = request.args.get('user', USERS[0])
+    users = load_users()
+    selected_user = request.args.get('user', users[0])
     start_date = request.args.get('start_date')
     end_date = request.args.get('end_date')
     if start_date and end_date:
@@ -184,5 +216,5 @@ def delete(index):
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 3000))
+    port = int(os.getenv("PORT", 5000))  # Vercel 用 PORT，本地預設 5000
     app.run(host='0.0.0.0', port=port)
